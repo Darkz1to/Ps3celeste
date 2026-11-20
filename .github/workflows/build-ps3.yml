@@ -85,19 +85,20 @@ jobs:
         run: |
           unzip -q -o ccleste-ps3.zip
           cd ccleste-ps3
-          make -f Makefile.ps3 pkg
+          make -f Makefile.ps3 ccleste.pkg
+          ls -la *.pkg
 
       - name: Guardar arquivos
         uses: actions/upload-artifact@v4
         with:
           name: ccleste-ps3
           path: |
-            ccleste-ps3/ccleste.pkg
+            ccleste-ps3/*.pkg
             ccleste-ps3/ccleste.elf
 
       - name: Publicar Release (baixe o .pkg por aqui)
         run: |
-          gh release create "ps3-build-${{ github.run_number }}" ccleste-ps3/ccleste.pkg \
+          gh release create "ps3-build-${{ github.run_number }}" ccleste-ps3/*.pkg \
             --title "ccleste PS3 build ${{ github.run_number }}" \
-            --notes "Build automatico do ccleste para PS3 (nao testado em hardware)."
+            --notes "ccleste.pkg = instalador normal (CFW/HEN). ccleste.gnpdrm.pkg = versao finalizada, use se o primeiro nao instalar. Nao testado em hardware."
             
