@@ -1,0 +1,103 @@
+name: Build PS3 pkg
+
+on:
+  workflow_dispatch:        # botão "Run workflow"
+  push:
+    paths:
+      - 'ccleste-ps3.zip'
+      - '.github/workflows/build-ps3.yml'
+
+permissions:
+  contents: write           # necessário para criar a Release com o .pkg
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      PS3DEV: /usr/local/ps3dev
+      PSL1GHT: /usr/local/ps3dev
+      PORTLIBS: /usr/local/ps3dev/portlibs/ppu
+      NO_SAVANNAH: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar pacotes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake bison flex gcc g++ libelf-dev make texinfo \
+            libncurses5-dev patch python3 python3-dev python-is-python3 subversion wget \
+            zlib1g-dev libtool-bin bzip2 libgmp3-dev pkg-config libssl-dev git zip unzip
+          sudo mkdir -p "$PS3DEV"
+          sudo chown -R "$(id -u):$(id -g)" "$PS3DEV"
+          {
+            echo "$PS3DEV/bin"
+            echo "$PS3DEV/ppu/bin"
+            echo "$PS3DEV/spu/bin"
+          } >> "$GITHUB_PATH"
+
+      # Cache: depois da 1a vez, o ambiente PS3 inteiro vem daqui em ~1 minuto
+      - name: Restaurar cache do ambiente PS3
+        id: env
+        uses: actions/cache/restore@v4
+        with:
+          path: /usr/local/ps3dev
+          key: ps3dev-env-v2
+
+      # O compilador (GCC) é a parte que leva horas. O projeto ps3toolchain
+      # publica ele pronto toda noite, então só baixamos.
+      - name: Baixar compilador pronto (ps3toolchain nightly)
+        if: steps.env.outputs.cache-hit != 'true'
+        run: |
+          TAG=$(gh release list --repo ps3dev/ps3toolchain --limit 1 --json tagName -q '.[0].tagName')
+          echo "Usando $TAG"
+          gh release download "$TAG" --repo ps3dev/ps3toolchain \
+            --pattern 'ps3dev-linux-X64.tar.gz' --dir /tmp
+          sudo tar -xzf /tmp/ps3dev-linux-X64.tar.gz -C /usr/local
+          sudo chown -R "$(id -u):$(id -g)" "$PS3DEV"
+          ls "$PS3DEV" "$PS3DEV/ppu/bin" | head -40
+
+      # O nightly vem só com o compilador. Faltam o PSL1GHT (SDK) e as
+      # bibliotecas (SDL, SDL_mixer...), que são os passos 008 e 009.
+      - name: Compilar PSL1GHT + bibliotecas (passos 008 e 009)
+        if: steps.env.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ps3dev/ps3toolchain.git /tmp/ps3toolchain
+          cd /tmp/ps3toolchain
+          ./toolchain.sh 008 009
+
+      - name: Salvar cache do ambiente PS3
+        if: steps.env.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /usr/local/ps3dev
+          key: ps3dev-env-v2
+
+      - name: Conferir ambiente
+        run: |
+          ls "$PS3DEV/bin" | head -50
+          ls "$PORTLIBS/lib" | grep -i -E 'SDL|ogg|vorbis' || true
+          ls "$PORTLIBS/bin" || true
+
+      # --- o jogo ---
+      - name: Compilar o jogo
+        run: |
+          unzip -q -o ccleste-ps3.zip
+          cd ccleste-ps3
+          make -f Makefile.ps3 pkg
+
+      - name: Guardar arquivos
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccleste-ps3
+          path: |
+            ccleste-ps3/ccleste.pkg
+            ccleste-ps3/ccleste.elf
+
+      - name: Publicar Release (baixe o .pkg por aqui)
+        run: |
+          gh release create "ps3-build-${{ github.run_number }}" ccleste-ps3/ccleste.pkg \
+            --title "ccleste PS3 build ${{ github.run_number }}" \
+            --notes "Build automatico do ccleste para PS3 (nao testado em hardware)."
+            
